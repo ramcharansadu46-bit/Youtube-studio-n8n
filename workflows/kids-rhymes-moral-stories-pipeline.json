@@ -1,0 +1,1158 @@
+{
+  "name": "Kids Rhymes & Moral Stories Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1,3,5"
+            }
+          ]
+        }
+      },
+      "id": "afadcadc-90d8-4f84-99df-181abcdd1a25",
+      "name": "Schedule (Mon/Wed/Fri 9am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "q",
+              "value": "kids rhymes moral stories for children"
+            },
+            {
+              "name": "type",
+              "value": "video"
+            },
+            {
+              "name": "order",
+              "value": "viewCount"
+            },
+            {
+              "name": "maxResults",
+              "value": "15"
+            },
+            {
+              "name": "publishedAfter",
+              "value": "={{ $now.minus({ days: 30 }).toISO() }}"
+            },
+            {
+              "name": "regionCode",
+              "value": "US"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8bbb8158-a47c-4dff-bc72-cb35a61ccccc",
+      "name": "Get Trending Kids Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "oswPMOTJavGSrluJ",
+          "name": "YouTube Data API Key (Sadu R)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.items || [];\nconst titles = items.map(i => i.snippet.title).join('\\n- ');\nreturn [{ json: { trendingTitles: '- ' + titles } }];"
+      },
+      "id": "bdd06e89-22a3-48d9-9344-3fd56df36189",
+      "name": "Extract Trending Titles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are writing scripts for a YouTube channel of rhymes and moral stories for ages 2-6. Here are currently trending titles in this niche for inspiration (do not copy, just note themes):\n{{ $json.trendingTitles }}\n\nWrite 6 ORIGINAL candidate scripts. For each: 60-90 seconds read-aloud length, simple vocabulary, rhyming/repetitive structure, one clear moral. Return ONLY a JSON array, no markdown fences, no preamble, in this exact shape: [{\"title\":\"...\",\"moral\":\"...\",\"scenes\":[{\"scene_number\":1,\"visual\":\"...\",\"narration\":\"...\"}]}]"
+      },
+      "id": "827050b8-916a-41a0-bf8d-abc130c8265c",
+      "name": "Generate Script Candidates",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.6,
+      "position": [
+        672,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.text ?? '';\nconst raw = text.trim().replace(/^```(?:json)?\\s*/, '').replace(/\\s*```$/, '');\nconst scripts = JSON.parse(raw);\nreturn scripts.map(s => ({ json: s }));"
+      },
+      "id": "ade74bfc-3a5b-471d-9a25-2e258e57bb1b",
+      "name": "Parse Scripts JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Score this children's script (ages 2-6 YouTube audience) out of 100. Return ONLY JSON, no other text: {\"total\":0,\"educational_value\":0,\"moral_clarity\":0,\"engagement_hook\":0,\"rhyme_language_quality\":0,\"age_appropriateness\":0,\"originality\":0,\"one_line_verdict\":\"\"}. Weights: educational_value out of 25, moral_clarity out of 20, engagement_hook out of 20, rhyme_language_quality out of 15, age_appropriateness out of 10, originality out of 10. Title: {{ $json.title }}. Moral: {{ $json.moral }}. Scenes: {{ JSON.stringify($json.scenes) }}"
+      },
+      "id": "d75e02f2-083b-4ce7-b956-53a6f1942e63",
+      "name": "Score Script",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.6,
+      "position": [
+        1120,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const scores = $input.all();\nconst scripts = $('Parse Scripts JSON').all();\nconst out = [];\nfor (let i = 0; i < scripts.length; i++) {\n  const t = (scores[i]?.json?.text ?? '{}').trim().replace(/^```(?:json)?\\s*/, '').replace(/\\s*```$/, '');\n  let score;\n  try { score = JSON.parse(t); } catch (e) { score = { total: 0, one_line_verdict: 'unparseable' }; }\n  out.push({ json: { ...scripts[i].json, score } });\n}\nreturn out;"
+      },
+      "id": "586e0165-c4db-45bc-9449-13d35bebe5cd",
+      "name": "Merge Scores Into Scripts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "sortFieldsUi": {
+          "sortField": [
+            {
+              "fieldName": "score.total",
+              "order": "descending"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c564b954-f75d-4ac3-adcf-d97df4040352",
+      "name": "Sort By Score",
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const top = $input.all().slice(0, 5);\nconst LF = String.fromCharCode(10);\nlet msg = 'Top script candidates:' + LF + LF;\ntop.forEach((item, i) => {\n  const s = item.json;\n  msg += (i + 1) + '. ' + s.title + ' - Score: ' + (s.score?.total ?? 'N/A') + '/100' + LF;\n  msg += '   Moral: ' + s.moral + LF;\n  msg += '   Verdict: ' + (s.score?.one_line_verdict ?? '') + LF + LF;\n});\nmsg += 'Reply with the number to approve, or \"none\" to skip this run.';\nreturn [{ json: { message: msg, candidates: top } }];"
+      },
+      "id": "a842df94-c7f8-49fa-9af8-1a0522b7ba0e",
+      "name": "Format Top 5 for Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "sendTo": "ramcharansadu46@gmail.com",
+        "subject": "Kids Channel: choose a script",
+        "message": "={{ $json.message }}",
+        "responseType": "freeText",
+        "options": {}
+      },
+      "id": "4771e7ab-2ea3-4b83-86bf-fa00564ed9f7",
+      "name": "Send Script Options",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2016,
+        192
+      ],
+      "webhookId": "9720451b-40ce-4dfb-8a12-35c9ecacfc15",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xPiYqnDHyHwIqO7o",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const reply = ($json.data?.text ?? '').trim();\nif (reply.toLowerCase() === 'none') { return [{ json: { approved: false } }]; }\nconst index = parseInt(reply, 10) - 1;\nconst candidates = $('Format Top 5 for Telegram').first().json.candidates;\nconst chosen = candidates?.[index]?.json;\nif (!chosen) { return [{ json: { approved: false } }]; }\nreturn [{ json: { approved: true, ...chosen } }];"
+      },
+      "id": "4d93142d-17a5-41a8-b695-7ae9d65d6dc8",
+      "name": "Get Selected Script",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "approved",
+              "leftValue": "={{ $json.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2a0f4267-ecb1-4629-b219-37f0464c9f39",
+      "name": "Script Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "scenes",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "id": "c9674a80-fab9-40cc-bb98-f39834a12eef",
+      "name": "Split Out Scenes",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.streamelements.com/kappa/v2/speech",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "voice",
+              "value": "Brian"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.scenes.narration }}"
+            },
+            {
+              "name": "key",
+              "value": "={{ $json.streamElementsKey }}"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 6000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "489da210-a6af-4696-a270-7d2556297b03",
+      "name": "Generate Voiceover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3136,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const bin = $binary?.data;\nconst mime = (bin?.mimeType || '').toLowerCase();\nif (!mime.includes('audio') && !mime.includes('mpeg')) {\n  let body = '';\n  try { body = Buffer.from(bin?.data || '', 'base64').toString('utf8').slice(0, 300); } catch (e) { body = '(unreadable)'; }\n  throw new Error('VoiceRSS did not return audio (mimeType=\"' + mime + '\"). VoiceRSS said: ' + body);\n}\nreturn $input.item;"
+      },
+      "id": "9e22fe63-8827-47a2-8010-68d155803bcd",
+      "name": "Validate Voiceover",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "name": "=scene-{{ $('Split Out Scenes').item.json.scene_number }}-audio.mp3",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "id": "4b907350-8e5c-4fe8-b867-09f11d017d4b",
+      "name": "Save Audio to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3360,
+        464
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "4tlSdJxdhaWIq0Il",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://image.pollinations.ai/prompt/{{ encodeURIComponent(\"children's book illustration, \" + $('Split Out Scenes').item.json.visual + \", soft pastel colors, simple rounded shapes, friendly cartoon characters, warm lighting, no text, 16:9 aspect ratio\") }}?width=1280&height=720&model=flux",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 6000
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "84e29c23-aeb1-4140-a5b4-b16d919ca91f",
+      "name": "Generate Scene Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3584,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "name": "=scene-{{ $('Split Out Scenes').item.json.scene_number }}-image.png",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "id": "8799f45a-66ff-476d-94d4-4c2daff95244",
+      "name": "Save Image to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3808,
+        192
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "4tlSdJxdhaWIq0Il",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const scenes = $('Split Out Scenes').all();\nconst images = $('Save Image to Drive').all();\nconst audios = $('Save Audio to Drive').all();\nconst videoClips = [];\nconst audioClips = [];\nlet start = 0;\nfor (let i = 0; i < scenes.length; i++) {\n  const duration = 6;\n  const imageUrl = images[i]?.json?.webContentLink || images[i]?.json?.webViewLink || '';\n  const audioUrl = audios[i]?.json?.webContentLink || '';\n  videoClips.push({ asset: { type: 'image', src: imageUrl }, start, length: duration, effect: 'zoomIn', transition: { in: 'fade', out: 'fade' } });\n  audioClips.push({ asset: { type: 'audio', src: audioUrl }, start, length: duration });\n  start += duration;\n}\nconst edit = { timeline: { background: '#FFF8E7', tracks: [ { clips: videoClips }, { clips: audioClips } ] }, output: { format: 'mp4', resolution: 'hd' } };\nreturn [{ json: { edit } }];"
+      },
+      "id": "fae1e8a3-46a4-47a8-ad74-a12034641b7a",
+      "name": "Build Shotstack Edit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4032,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.shotstack.io/stage/render",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.edit) }}",
+        "options": {}
+      },
+      "id": "6223dca4-8ab4-491c-bb09-c7945450cb20",
+      "name": "Submit Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4256,
+        192
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "X0TrCH48evWN1wBH",
+          "name": "Shotstack API (Sadu R)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 180
+      },
+      "id": "164acb97-eab3-4cce-b07e-ec2825a45099",
+      "name": "Wait For Render",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        192
+      ],
+      "webhookId": "5c073b22-e0bf-460f-bde4-1554da6b9dfd"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.shotstack.io/stage/render/{{ $('Submit Render').item.json.response.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "options": {}
+      },
+      "id": "e40703b1-8a72-46e3-9cd3-3bbc0b3d0efb",
+      "name": "Check Render Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3360,
+        272
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "X0TrCH48evWN1wBH",
+          "name": "Shotstack API (Sadu R)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "done",
+              "leftValue": "={{ $json.response.status }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "330577b6-5c45-48f9-9dcb-ebd8a8071e5d",
+      "name": "Render Done?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2688,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "sendTo": "ramcharansadu46@gmail.com",
+        "subject": "=Kids Channel: approve video \"{{ $('Get Selected Script').first().json.title }}\"",
+        "message": "=Preview ready: {{ $json.response.url }}\n\nClick Approve to publish to YouTube, or Decline to discard.",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {}
+      },
+      "id": "07c769da-ffde-403f-9ee7-57dc6b5d544e",
+      "name": "Send Video For Review",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        5152,
+        96
+      ],
+      "webhookId": "abe74c0b-5373-4c48-b902-cf92e4721911",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xPiYqnDHyHwIqO7o",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "approve",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9355a495-2d3c-45d1-9a6c-fde148a6fe81",
+      "name": "Video Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3136,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Check Render Status').item.json.response.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "6ac85394-fadf-4fde-b384-df3efc4d7009",
+      "name": "Download Rendered Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Get Selected Script').first().json.title }}",
+        "regionCode": "US",
+        "categoryId": "27",
+        "options": {
+          "description": "={{ $('Get Selected Script').first().json.moral }}\n\n#kidsrhymes #moralstories #nurseryrhymes",
+          "notifySubscribers": false,
+          "privacyStatus": "private",
+          "selfDeclaredMadeForKids": true,
+          "tags": "kids rhymes,moral stories,nursery rhymes,kids songs"
+        }
+      },
+      "id": "0acc0522-ae12-4f8e-a385-74055626e937",
+      "name": "Upload To YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        3584,
+        0
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "m5xIue3yRe8rdBK8",
+          "name": "YouTube account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "159cPN0mu70fcbFMp660v_tWrfYdB3JHqKjDbMevnBVQ",
+          "cachedResultName": "youtube videos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/159cPN0mu70fcbFMp660v_tWrfYdB3JHqKjDbMevnBVQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.toISO() }}",
+            "Title": "={{ $('Get Selected Script').first().json.title }}",
+            "Score": "={{ $('Get Selected Script').first().json.score.total }}",
+            "YouTube URL": "=https://youtube.com/watch?v={{ $('Upload To YouTube').item.json.id }}",
+            "Status": "Published"
+          },
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "YouTube URL",
+              "displayName": "YouTube URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "73ae49a5-b44e-41b1-ba1a-e36619e51dbe",
+      "name": "Log To Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3808,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "PqLqX6vueLONR6tG",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "ramcharansadu46@gmail.com",
+        "subject": "Kids Channel: render still processing",
+        "emailType": "text",
+        "message": "=Render for \"{{ $('Get Selected Script').first().json.title }}\" is still processing after 3 min. Check the Shotstack dashboard and re-run manually if needed.",
+        "options": {}
+      },
+      "id": "d11e3876-1255-4539-aab6-b7fe08b79748",
+      "name": "Notify Render Not Ready",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        5424,
+        368
+      ],
+      "webhookId": "4981ff5c-21c4-4251-879b-f82d77477252",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xPiYqnDHyHwIqO7o",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jwt = \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaXRhZGVsIiwiZXhwIjoxODA0MzU1NzIwLCJqdGkiOiIwNmY5ZmU5Yy02ODg3LTRkODAtOGQ5ZC1lZjU4ZGMxZmNjNWYiLCJjaGFubmVsIjoiNmE5ZWZhODdhMzRmYjdmZjRlMTdhNzViIiwicm9sZSI6Im93bmVyIiwiYXV0aFRva2VuIjoiWml0YllZODdSSmdnc2dLZXZXZFNsUnpwNGRpRkZPMjVlZUp6c3RNNXhqei1XMG95IiwidXNlciI6IjZhOWVmYTg3YTM0ZmI3ZmY0ZTE3YTc1YSIsInVzZXJfaWQiOiJlYTE0MGFmZC00MGU2LTRhZWUtYWNhMy01NGM2MjYwMjI2ZjEiLCJ1c2VyX3JvbGUiOiJjcmVhdG9yIiwicHJvdmlkZXIiOiJ5b3V0dWJlIiwicHJvdmlkZXJfaWQiOiJVQzJQcHpvamRWNmJIeUlrZ21JNUpac3ciLCJjaGFubmVsX2lkIjoiYzE4NWM4NzYtZDJhMy00YTdlLTljZWQtYTg0ZmNmZmQ0OTYwIiwiY3JlYXRvcl9pZCI6ImNjMWNhZDlkLWY0NDgtNGVmMi04MGM4LWM0ZjAyYTAzZDYwZCJ9.uTGheLCd9s9H2r600lQn5bLxBPaFoDxtm2fnqKpONfc\";\n\nif (!jwt) {\n  throw new Error('StreamElements JWT not found');\n}\n\nconst parts = jwt.split('.');\n\nif (parts.length !== 3) {\n  throw new Error('Invalid JWT format');\n}\n\nconst payload = JSON.parse(\n  Buffer.from(\n    parts[1].replace(/-/g, '+').replace(/_/g, '/'),\n    'base64'\n  ).toString('utf8')\n);\n\nif (!payload.authToken) {\n  throw new Error('authToken not found inside JWT');\n}\n\nreturn [{\n  json: {\n    ...$json,\n    streamElementsKey: payload.authToken\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        384
+      ],
+      "id": "d5161c36-7c23-4f55-b0da-10dcc47fb12d",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        400
+      ],
+      "id": "e44708fc-3e3f-4d7e-a117-dd43a09c4bea",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "zPSkcShOjLYDLJwg",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        608,
+        400
+      ],
+      "id": "0241f4d4-853e-491c-b5c1-b35bc8bd9e27",
+      "name": "Groq Chat Model1",
+      "credentials": {
+        "groqApi": {
+          "id": "zPSkcShOjLYDLJwg",
+          "name": "Groq account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule (Mon/Wed/Fri 9am)": {
+      "main": [
+        [
+          {
+            "node": "Get Trending Kids Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Trending Kids Content": {
+      "main": [
+        [
+          {
+            "node": "Extract Trending Titles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Trending Titles": {
+      "main": [
+        [
+          {
+            "node": "Generate Script Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Script Candidates": {
+      "main": [
+        [
+          {
+            "node": "Parse Scripts JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Scripts JSON": {
+      "main": [
+        [
+          {
+            "node": "Score Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Script": {
+      "main": [
+        [
+          {
+            "node": "Merge Scores Into Scripts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Scores Into Scripts": {
+      "main": [
+        [
+          {
+            "node": "Sort By Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort By Score": {
+      "main": [
+        [
+          {
+            "node": "Format Top 5 for Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Top 5 for Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Script Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Script Options": {
+      "main": [
+        [
+          {
+            "node": "Get Selected Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Selected Script": {
+      "main": [
+        [
+          {
+            "node": "Script Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Script Approved?": {
+      "main": [
+        [
+          {
+            "node": "Split Out Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Scenes": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Voiceover": {
+      "main": [
+        [
+          {
+            "node": "Validate Voiceover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Voiceover": {
+      "main": [
+        [
+          {
+            "node": "Save Audio to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Audio to Drive": {
+      "main": [
+        [
+          {
+            "node": "Generate Scene Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Scene Image": {
+      "main": [
+        [
+          {
+            "node": "Save Image to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Image to Drive": {
+      "main": [
+        [
+          {
+            "node": "Build Shotstack Edit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Shotstack Edit": {
+      "main": [
+        [
+          {
+            "node": "Submit Render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Render": {
+      "main": [
+        [
+          {
+            "node": "Wait For Render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Render": {
+      "main": [
+        [
+          {
+            "node": "Check Render Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Render Status": {
+      "main": [
+        [
+          {
+            "node": "Render Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Done?": {
+      "main": [
+        [
+          {
+            "node": "Send Video For Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Render Not Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Video For Review": {
+      "main": [
+        [
+          {
+            "node": "Video Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video Approved?": {
+      "main": [
+        [
+          {
+            "node": "Download Rendered Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Rendered Video": {
+      "main": [
+        [
+          {
+            "node": "Upload To YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload To YouTube": {
+      "main": [
+        [
+          {
+            "node": "Log To Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Generate Voiceover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Score Script",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Script Candidates",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "pinData": {},
+  "triggerCount": 0,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

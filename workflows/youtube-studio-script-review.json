@@ -1,0 +1,223 @@
+{
+  "name": "YouTube Studio - Script Review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "youtube-studio/ideas",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "idea-intake",
+      "name": "YouTube Studio - Idea Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1180, 40],
+      "webhookId": "youtube-studio-idea-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst title = String(body.title ?? '').trim();\nconst brief = String(body.brief ?? '').trim();\nconst audience = String(body.audience ?? 'general audience').trim();\nconst language = String(body.language ?? 'English').trim();\nif (!title || !brief) throw new Error('title and brief are required');\nif (title.length > 180 || brief.length > 5000) throw new Error('title or brief is too long');\nreturn [{ json: { requestId: `ys-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, fictional: true, title, brief, audience, language, requestedAt: new Date().toISOString(), provider: 'gemini' } }];"
+      },
+      "id": "validate-idea",
+      "name": "Validate fictional idea",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-940, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { contents: [{ parts: [{ text: `You are preparing a fictional YouTube draft. Do not claim guaranteed views or virality. Return JSON with title, hook, outline, script, rightsNotes, and safetyNotes. Idea title: ${$json.title}\nBrief: ${$json.brief}\nAudience: ${$json.audience}\nLanguage: ${$json.language}` }] }] } }}",
+        "options": { "response": { "response": { "neverError": true, "response": { "responseFormat": "json" } } } }
+      },
+      "id": "gemini-generate",
+      "name": "Gemini - Generate draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-700, 40],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Gemini API Key" } }
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "leftValue": "={{ $json.error?.code ?? $json.code ?? $json.statusCode ?? 0 }}", "rightValue": 429, "operator": { "type": "number", "operation": "equals" } }] },
+        "options": {}
+      },
+      "id": "gemini-score-quota",
+      "name": "Gemini score quota response?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [500, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.1, messages: [{ role: 'system', content: 'Return only JSON with overall, clarity, audienceFit, originality, factualRisk, rightsRisk, strengths, concerns, and recommendedEdits.' }, { role: 'user', content: `Score this fictional YouTube script from 0 to 10 for clarity, audience fit, originality, factual-risk awareness, and rights awareness. Advisory only; do not predict views or virality.\nTitle: ${$('Normalize immutable draft').item.json.draft.title}\nScript: ${$('Normalize immutable draft').item.json.draft.script}` }] } }}",
+        "options": { "response": { "response": { "neverError": false } } }
+      },
+      "id": "groq-score",
+      "name": "Groq - Free fallback score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [740, 320],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Groq API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? $json.choices?.[0]?.message?.content ?? '{}';\nlet score;\ntry { score = JSON.parse(source.replace(/^```json\\s*|\\s*```$/g, '')); } catch { score = { overall: null, concerns: ['Scoring response was not valid JSON'], recommendedEdits: [] }; }\nconst draft = $('Normalize immutable draft').item.json;\nreturn [{ json: { ...draft, score, status: 'awaiting_human_review', reviewUrl: `${$env.REVIEW_BASE_URL ?? 'REPLACE_REVIEW_BASE_URL'}?scriptId=${encodeURIComponent(draft.scriptId)}` } }];"
+      },
+      "id": "normalize-score",
+      "name": "Normalize advisory score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [980, 40]
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "leftValue": "={{ $json.error?.code ?? $json.code ?? $json.statusCode ?? 0 }}", "rightValue": 429, "operator": { "type": "number", "operation": "equals" } }] },
+        "options": {}
+      },
+      "id": "gemini-quota",
+      "name": "Gemini quota response?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-460, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'llama-3.3-70b-versatile', temperature: 0.4, messages: [{ role: 'system', content: 'Return JSON with title, hook, outline, script, rightsNotes, and safetyNotes for fictional YouTube content. Do not claim guaranteed views or virality.' }, { role: 'user', content: `Idea title: ${$('Validate fictional idea').item.json.title}\nBrief: ${$('Validate fictional idea').item.json.brief}\nAudience: ${$('Validate fictional idea').item.json.audience}\nLanguage: ${$('Validate fictional idea').item.json.language}` }] } }}",
+        "options": { "response": { "response": { "neverError": false } } }
+      },
+      "id": "groq-generate",
+      "name": "Groq - Free fallback draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-220, 180],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Groq API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? $json.choices?.[0]?.message?.content;\nif (!source) throw new Error('Provider returned no draft');\nlet draft;\ntry { draft = JSON.parse(source.replace(/^```json\\s*|\\s*```$/g, '')); } catch { draft = { title: 'Untitled draft', script: source, hook: '', outline: [], rightsNotes: 'Verify rights manually', safetyNotes: 'Review manually' }; }\nconst request = $('Validate fictional idea').item.json;\nreturn [{ json: { ...request, draft, scriptId: `${request.requestId}-script`, generatedAt: new Date().toISOString(), generatedBy: $node['Groq - Free fallback draft'] ? 'groq-fallback' : 'gemini' } }];"
+      },
+      "id": "normalize-draft",
+      "name": "Normalize immutable draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { contents: [{ parts: [{ text: `Score this fictional YouTube script from 0 to 10 for clarity, audience fit, originality, factual-risk awareness, and rights awareness. This is advisory only; do not predict views or virality. Return JSON with overall, clarity, audienceFit, originality, factualRisk, rightsRisk, strengths, concerns, and recommendedEdits.\nTitle: ${$json.draft.title}\nScript: ${$json.draft.script}` }] }] } }}",
+        "options": { "response": { "response": { "neverError": true } } }
+      },
+      "id": "gemini-score",
+      "name": "Gemini - Score draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 40],
+      "credentials": { "httpHeaderAuth": { "id": "", "name": "Gemini API Key" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? $json.choices?.[0]?.message?.content ?? '{}';\nlet score;\ntry { score = JSON.parse(source.replace(/^```json\\s*|\\s*```$/g, '')); } catch { score = { overall: null, concerns: ['Scoring response was not valid JSON'], recommendedEdits: [] }; }\nconst draft = $('Normalize immutable draft').item.json;\nreturn [{ json: { ...draft, score, status: 'awaiting_human_review', reviewUrl: `${$env.REVIEW_BASE_URL ?? 'REPLACE_REVIEW_BASE_URL'}?scriptId=${encodeURIComponent(draft.scriptId)}` } }];"
+      },
+      "id": "prepare-review",
+      "name": "Prepare human review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 40]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.REVIEW_FROM_EMAIL }}",
+        "toEmail": "={{ $env.REVIEW_EMAIL }}",
+        "subject": "={{ `[YouTube Studio] Review script: ${$json.draft.title}` }}",
+        "emailFormat": "html",
+        "html": "={{ `<h2>${$json.draft.title}</h2><p><b>Script ID:</b> ${$json.scriptId}</p><p><b>Advisory score:</b> ${$json.score.overall ?? ' unavailable'}</p><h3>Draft</h3><pre>${$json.draft.script}</pre><h3>Rights and safety notes</h3><p>${$json.draft.rightsNotes}</p><p>${$json.draft.safetyNotes}</p><p><a href='${$json.reviewUrl}&decision=approve'>Approve for next manual step</a> | <a href='${$json.reviewUrl}&decision=reject'>Reject</a></p>` }}",
+        "options": {}
+      },
+      "id": "send-review-email",
+      "name": "Email script for selection",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [740, 40],
+      "credentials": { "smtp": { "id": "", "name": "YouTube Studio Review Email" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { accepted: true, scriptId: $('Prepare human review').item.json.scriptId, status: 'awaiting_human_review' } }}", "options": {} },
+      "id": "respond-intake",
+      "name": "Acknowledge intake",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [980, 40]
+    },
+    {
+      "parameters": { "httpMethod": "GET", "path": "youtube-studio/approval", "responseMode": "responseNode", "options": {} },
+      "id": "approval-webhook",
+      "name": "YouTube Studio - Approval",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-700, 420],
+      "webhookId": "youtube-studio-approval"
+    },
+    {
+      "parameters": { "jsCode": "const query = $json.query ?? $json;\nconst decision = String(query.decision ?? '').toLowerCase();\nconst scriptId = String(query.scriptId ?? '').trim();\nif (!scriptId || !['approve', 'reject'].includes(decision)) throw new Error('scriptId and decision=approve|reject are required');\nreturn [{ json: { scriptId, decision, recordedAt: new Date().toISOString(), nextStep: decision === 'approve' ? 'manual production review required' : 'no further action' } }];" },
+      "id": "record-approval",
+      "name": "Record explicit approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-440, 420]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "={{ { recorded: true, scriptId: $json.scriptId, decision: $json.decision, nextStep: $json.nextStep } }}", "options": {} },
+      "id": "respond-approval",
+      "name": "Confirm approval decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [-180, 420]
+    }
+  ],
+  "connections": {
+    "YouTube Studio - Idea Intake": { "main": [[{ "node": "Validate fictional idea", "type": "main", "index": 0 }]] },
+    "Validate fictional idea": { "main": [[{ "node": "Gemini - Generate draft", "type": "main", "index": 0 }]] },
+    "Gemini - Generate draft": { "main": [[{ "node": "Gemini quota response?", "type": "main", "index": 0 }]] },
+    "Gemini quota response?": { "main": [[{ "node": "Groq - Free fallback draft", "type": "main", "index": 0 }], [{ "node": "Normalize immutable draft", "type": "main", "index": 0 }]] },
+    "Groq - Free fallback draft": { "main": [[{ "node": "Normalize immutable draft", "type": "main", "index": 0 }]] },
+    "Normalize immutable draft": { "main": [[{ "node": "Gemini - Score draft", "type": "main", "index": 0 }]] },
+    "Gemini - Score draft": { "main": [[{ "node": "Gemini score quota response?", "type": "main", "index": 0 }]] },
+    "Gemini score quota response?": { "main": [[{ "node": "Groq - Free fallback score", "type": "main", "index": 0 }], [{ "node": "Normalize advisory score", "type": "main", "index": 0 }]] },
+    "Groq - Free fallback score": { "main": [[{ "node": "Normalize advisory score", "type": "main", "index": 0 }]] },
+    "Normalize advisory score": { "main": [[{ "node": "Prepare human review", "type": "main", "index": 0 }]] },
+    "Prepare human review": { "main": [[{ "node": "Email script for selection", "type": "main", "index": 0 }]] },
+    "Email script for selection": { "main": [[{ "node": "Acknowledge intake", "type": "main", "index": 0 }]] },
+    "YouTube Studio - Approval": { "main": [[{ "node": "Record explicit approval", "type": "main", "index": 0 }]] },
+    "Record explicit approval": { "main": [[{ "node": "Confirm approval decision", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "youtube-studio-script-review-v1",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}
